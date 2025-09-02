@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Topic Filter • Apple Flyouts</title>
+    <!-- Materialize CSS (simple Material UI) -->
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background: #fafafa;
+      }
+      .container {
+        max-width: 980px;
+      }
+      pre {
+        white-space: pre-wrap;
+      }
+      .chips-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .chip {
+        margin: 0;
+      }
+      .section-card {
+        padding: 16px;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+      .dim {
+        color: #757575;
+      }
+      .nowrap {
+        white-space: nowrap;
+      }
+      .spinner {
+        display: none;
+      }
+      .spinner.active {
+        display: inline-block;
+      }
+      .topic-badge {
+        font-size: 0.85rem;
+      }
+      .small {
+        font-size: 0.9rem;
+      }
+      .material-icons {
+        vertical-align: middle;
+      }
+      .fixed-action-btn {
+        bottom: 24px;
+        right: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="blue-grey darken-3">
+      <div class="nav-wrapper container">
+        <a href="#" class="brand-logo">AI Topic Filter</a>
+      </div>
+    </nav>
+
+    <div class="container">
+      <div class="section">
+        <h5>1) Load topics from Apple</h5>
+        <p class="dim">
+          Endpoint:
+          <span class="mono"
+            >https://www.apple.com/api-www/global-elements/global-header/v1/flyouts?locale=en_US</span
+          >
+        </p>
+        <div class="row">
+          <div class="col s12 m9">
+            <a id="btnFetch" class="btn waves-effect waves-light">
+              <i class="material-icons left">cloud_download</i>Fetch Apple
+              Topics
+            </a>
+            <div
+              id="fetchStatus"
+              class="small dim"
+              style="margin-top: 8px"
+            ></div>
+          </div>
+        </div>
+        <div id="topicsCard" class="card section-card">
+          <div class="row" style="margin-bottom: 0">
+            <div class="col s12">
+              <div class="chips-container" id="topicsChips"></div>
+              <div
+                class="small dim"
+                id="topicsMeta"
+                style="margin-top: 6px"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h5>2) Try a user phrase</h5>
+        <div class="row">
+          <div class="input-field col s12 m8">
+            <input
+              id="userText"
+              type="text"
+              placeholder="e.g., Any phone or Mac events next month?"
+            />
+            <label for="userText" class="active">User input (English)</label>
+          </div>
+          <div class="input-field col s6 m2">
+            <input id="minScore" type="number" step="0.1" value="1" />
+            <label for="minScore" class="active">minScore</label>
+          </div>
+          <div class="input-field col s6 m2">
+            <input id="topK" type="number" value="5" />
+            <label for="topK" class="active">topK</label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col s12 m6">
+            <a id="btnInfer" class="btn waves-effect waves-light">
+              <i class="material-icons left">Find topic</i>Infer Topics
+            </a>
+          </div>
+        </div>
+
+        <ul class="collection" id="resultsList"></ul>
+      </div>
+
+      <div class="section">
+        <h6>Debug</h6>
+        <details>
+          <summary class="small">Show raw model/topics</summary>
+          <pre id="debugArea" class="mono"></pre>
+        </details>
+      </div>
+    </div>
+
+    <!-- Materialize JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+
+    <script>
+      // ===================== Utilities =====================
+      const STOPWORDS = new Set([
+        "i",
+        "me",
+        "my",
+        "myself",
+        "we",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "yourselves",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "it",
+        "its",
+        "is",
+        "am",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "to",
+        "for",
+        "of",
+        "on",
+        "in",
+        "with",
+        "about",
+        "into",
+        "from",
+        "at",
+        "by",
+        "as",
+        "that",
+        "this",
+        "these",
+        "those",
+        "there",
+        "here",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "when",
+        "where",
+        "why",
+        "how",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "would",
+        "should",
+        "could",
+        "can",
+        "will",
+        "just",
+        "so",
+        "if",
+        "than",
+        "then",
+      ]);
+
+      function normalize(text) {
+        return String(text || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9\s\-\+\/\.]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+      function tokenize(text) {
+        const tokens = normalize(text).split(" ");
+        return tokens.filter((t) => t && !STOPWORDS.has(t));
+      }
+      function variants(word) {
+        const v = new Set([word]);
+        if (word.endsWith("ies") && word.length > 3)
+          v.add(word.slice(0, -3) + "y");
+        if (word.endsWith("s") && !word.endsWith("ss"))
+          v.add(word.slice(0, -1));
+        if (word.endsWith("es")) v.add(word.slice(0, -2));
+        return Array.from(v);
+      }
+      function levenshtein(a, b) {
+        if (a === b) return 0;
+        if (!a.length) return b.length;
+        if (!b.length) return a.length;
+        const dp = Array(b.length + 1)
+          .fill(0)
+          .map((_, i) => i);
+        for (let i = 0; i < a.length; i++) {
+          let prev = i + 1;
+          for (let j = 0; j < b.length; j++) {
+            const tmp = dp[j + 1];
+            dp[j + 1] = Math.min(
+              dp[j + 1] + 1,
+              prev + 1,
+              dp[j] + (a[i] === b[j] ? 0 : 1)
+            );
+            prev = tmp;
+          }
+          dp[0] = i + 1;
+        }
+        return dp[b.length];
+      }
+
+      // Derived synonyms for labels like "iPhone" -> "phone"
+      function deriveSynonymsFromLabel(label) {
+        const L = normalize(label);
+        const syns = new Set();
+        const words = L.split(" ");
+        for (const w of words) {
+          if (w.length > 2 && w[0] === "i" && /[a-z]/.test(w[1]))
+            syns.add(w.slice(1)); // iphone->phone
+        }
+        if (/\bphone\b/.test(L) || /iphone/.test(L)) {
+          syns.add("phone");
+          syns.add("smartphone");
+          syns.add("mobile");
+          syns.add("mobile phone");
+          syns.add("cell phone");
+          syns.add("apple phone");
+        }
+        L.split(/[\/\+]/).forEach((p) => {
+          const t = p.trim();
+          if (t && t !== L) syns.add(t);
+        });
+        return Array.from(syns);
+      }
+
+      // ===================== Building the topic model =====================
+      function buildTopicModel(topics, options = {}) {
+        const { synonyms = {}, extraPhrases = {}, negatives = {} } = options;
+        return topics.map((raw, idx) => {
+          const label = String(raw).trim();
+          const id = normalize(label).replace(/\s+/g, "_") || `topic_${idx}`;
+          const words = tokenize(label);
+          const keywordSet = new Set();
+          for (const w of words) variants(w).forEach((v) => keywordSet.add(v));
+          const providedSyns =
+            synonyms[label] || synonyms[id] || synonyms[words[0]] || [];
+          for (const s of providedSyns)
+            tokenize(s).forEach((w) =>
+              variants(w).forEach((v) => keywordSet.add(v))
+            );
+          const derived = deriveSynonymsFromLabel(label);
+          for (const s of derived)
+            tokenize(s).forEach((w) =>
+              variants(w).forEach((v) => keywordSet.add(v))
+            );
+          const phrases = [
+            label.toLowerCase(),
+            ...(extraPhrases[label] || extraPhrases[id] || []),
+          ].map(normalize);
+          const neg = (negatives[label] || negatives[id] || []).map(normalize);
+          return {
+            id,
+            label,
+            keywords: Array.from(keywordSet),
+            phrases,
+            negatives: neg,
+          };
+        });
+      }
+
+      function scoreTopic(text, tokens, topic) {
+        const textNorm = normalize(text);
+        for (const n of topic.negatives || [])
+          if (textNorm.includes(n)) return 0;
+        let score = 0;
+        for (const p of topic.phrases || [])
+          if (p && textNorm.includes(p)) score += 3;
+        const tokenSet = new Set(tokens);
+        for (const kw of topic.keywords || [])
+          if (tokenSet.has(kw)) score += 1.5;
+        for (const t of tokens) {
+          for (const kw of topic.keywords || []) {
+            const d = levenshtein(t, kw);
+            if ((kw.length <= 4 && d === 1) || (kw.length > 4 && d <= 2))
+              score += 0.5;
+            const minCore = 5;
+            if (
+              t.length >= minCore &&
+              kw.length >= minCore &&
+              (t.includes(kw) || kw.includes(t))
+            )
+              score += 1.0;
+          }
+        }
+        return score;
+      }
+
+      function inferTopics(text, model, options = {}) {
+        const { minScore = 1.0, topK = 5 } = options;
+        const tokens = tokenize(text);
+        const scored = model
+          .map((topic) => ({
+            id: topic.id,
+            label: topic.label,
+            score: scoreTopic(text, tokens, topic),
+          }))
+          .filter((t) => t.score >= minScore)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, topK);
+        if (scored.length > 0) {
+          const max = scored[0].score || 1;
+          for (const s of scored) s.confidence = +(s.score / max).toFixed(2);
+        }
+        return scored;
+      }
+
+      /** Extract only main topics and subtopics from Apple flyouts JSON */
+      function extractAppleTopics(json) {
+        const topics = new Set();
+        const items = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.items)
+          ? json.items
+          : [];
+        for (const item of items) {
+          if (!item || typeof item !== "object") continue;
+          // main topic: item.name
+          if (item.name) topics.add(String(item.name));
+          // subtopics from elevatedGroups.elevatedLinks[].text
+          (item.elevatedGroups || []).forEach((g) =>
+            (g?.elevatedLinks || []).forEach((l) => {
+              if (l?.text) topics.add(String(l.text));
+            })
+          );
+          // subtopics from baseGroups.baseLinks[].text
+          (item.baseGroups || []).forEach((g) =>
+            (g?.baseLinks || []).forEach((l) => {
+              if (l?.text) topics.add(String(l.text));
+            })
+          );
+        }
+        // Clean & dedupe: remove very short generic words
+        const cleaned = Array.from(topics)
+          .map((t) => t.trim())
+          .filter((t) => t && t.length >= 2)
+          .filter((t) => !/^learn more$/i.test(t));
+        return cleaned;
+      }
+
+      // ===================== UI Logic =====================
+      let topicStrings = [];
+      let model = [];
+
+      const btnFetch = document.getElementById("btnFetch");
+      const fetchStatus = document.getElementById("fetchStatus");
+      const topicsChips = document.getElementById("topicsChips");
+      const topicsMeta = document.getElementById("topicsMeta");
+      const userTextEl = document.getElementById("userText");
+      const minScoreEl = document.getElementById("minScore");
+      const topKEl = document.getElementById("topK");
+      const btnInfer = document.getElementById("btnInfer");
+      const resultsList = document.getElementById("resultsList");
+      const debugArea = document.getElementById("debugArea");
+
+      function renderChips(list) {
+        topicsChips.innerHTML = "";
+        list.forEach((t) => {
+          const chip = document.createElement("div");
+          chip.className = "chip topic-badge";
+          chip.textContent = t;
+          topicsChips.appendChild(chip);
+        });
+        topicsMeta.textContent = list.length
+          ? `${list.length} topics loaded`
+          : "No topics loaded yet";
+      }
+
+      function renderResults(items) {
+        resultsList.innerHTML = "";
+        if (!items.length) {
+          resultsList.innerHTML = '<li class="collection-item">No matches</li>';
+          return;
+        }
+        for (const r of items) {
+          const li = document.createElement("li");
+          li.className = "collection-item";
+          li.innerHTML = `<span class="title"><strong>${
+            r.label
+          }</strong></span><br/><span class="dim small">score: ${r.score.toFixed(
+            2
+          )} · confidence: ${r.confidence}</span>`;
+          resultsList.appendChild(li);
+        }
+      }
+
+      btnFetch.addEventListener("click", async () => {
+        fetchStatus.textContent = "Fetching…";
+        try {
+          const resp = await fetch("/data.json", { mode: "cors" });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          topicStrings = extractAppleTopics(data);
+          renderChips(topicStrings);
+          // Build model with a few helpful synonyms for common Apple terms
+          model = buildTopicModel(topicStrings, {
+            synonyms: {
+              iphone: ["phone", "smartphone", "mobile"],
+              ipad: ["tablet"],
+              mac: ["macbook", "laptop", "desktop", "mac os", "macos"],
+              watch: ["apple watch", "smartwatch"],
+              accessories: ["case", "charger", "cable", "keyboard", "mouse"],
+              vision: [
+                "apple vision pro",
+                "vision pro",
+                "headset",
+                "xr",
+                "spatial",
+              ],
+              trade: ["trade in", "trade-in"],
+              financing: ["payment plan"],
+            },
+          });
+          debugArea.textContent = JSON.stringify(
+            { topics: topicStrings.slice(0, 50), modelSize: model.length },
+            null,
+            2
+          );
+          fetchStatus.textContent = "Done";
+          M.toast({ html: `Loaded ${topicStrings.length} topics` });
+        } catch (err) {
+          console.error(err);
+          fetchStatus.innerHTML = `<span class="red-text">Failed: ${err.message}. If blocked by CORS, use a small dev proxy.</span>`;
+          M.toast({ html: "Fetch failed (see console)" });
+        }
+      });
+
+      btnInfer.addEventListener("click", () => {
+        const text = userTextEl.value || "";
+        const minScore = parseFloat(minScoreEl.value || "1") || 1;
+        const topK = parseInt(topKEl.value || "5", 10) || 5;
+        if (!text.trim()) {
+          M.toast({ html: "Enter a user phrase first" });
+          return;
+        }
+        if (!model.length) {
+          M.toast({ html: "Load topics first" });
+          return;
+        }
+        const results = inferTopics(text, model, { minScore, topK });
+        renderResults(results);
+      });
+
+      // Prefill example for quick testing
+      userTextEl.value = "Looking for phone, Mac or Vision Pro events";
+      M.updateTextFields();
+    </script>
+  </body>
+</html>
