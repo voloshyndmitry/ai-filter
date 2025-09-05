@@ -236,52 +236,62 @@
           .replace(/\s+/g, " ")
           .trim();
       }
+
       function tokenize(text) {
         const tokens = normalize(text).split(" ");
-        return tokens.filter((t) => t && !STOPWORDS.has(t));
+        return tokens.filter((token) => token && !STOPWORDS.has(token));
       }
+
       function variants(word) {
-        const v = new Set([word]);
-        if (word.endsWith("ies") && word.length > 3)
-          v.add(word.slice(0, -3) + "y");
-        if (word.endsWith("s") && !word.endsWith("ss"))
-          v.add(word.slice(0, -1));
-        if (word.endsWith("es")) v.add(word.slice(0, -2));
-        return Array.from(v);
+        const variantsSet = new Set([word]);
+        if (word.endsWith("ies") && word.length > 3) {
+          variantsSet.add(word.slice(0, -3) + "y");
+        }
+        if (word.endsWith("s") && !word.endsWith("ss")) {
+          variantsSet.add(word.slice(0, -1));
+        }
+        if (word.endsWith("es")) {
+          variantsSet.add(word.slice(0, -2));
+        }
+        return Array.from(variantsSet);
       }
-      function levenshtein(a, b) {
-        if (a === b) return 0;
-        if (!a.length) return b.length;
-        if (!b.length) return a.length;
-        const dp = Array(b.length + 1)
+      function levenshtein(stringA, stringB) {
+        if (stringA === stringB) return 0;
+        if (!stringA.length) return stringB.length;
+        if (!stringB.length) return stringA.length;
+        const dp = Array(stringB.length + 1)
           .fill(0)
           .map((_, i) => i);
-        for (let i = 0; i < a.length; i++) {
+        for (let i = 0; i < stringA.length; i++) {
           let prev = i + 1;
-          for (let j = 0; j < b.length; j++) {
+          for (let j = 0; j < stringB.length; j++) {
             const tmp = dp[j + 1];
             dp[j + 1] = Math.min(
               dp[j + 1] + 1,
               prev + 1,
-              dp[j] + (a[i] === b[j] ? 0 : 1)
+              dp[j] + (stringA[i] === stringB[j] ? 0 : 1)
             );
             prev = tmp;
           }
           dp[0] = i + 1;
         }
-        return dp[b.length];
+        return dp[stringB.length];
       }
 
       // Derived synonyms for labels like "iPhone" -> "phone"
       function deriveSynonymsFromLabel(label) {
-        const L = normalize(label);
+        const normalizedLabel = normalize(label);
         const syns = new Set();
-        const words = L.split(" ");
-        for (const w of words) {
-          if (w.length > 2 && w[0] === "i" && /[a-z]/.test(w[1]))
-            syns.add(w.slice(1)); // iphone->phone
+        const words = normalizedLabel.split(" ");
+        for (const word of words) {
+          if (word.length > 2 && word[0] === "i" && /[a-z]/.test(word[1])) {
+            syns.add(word.slice(1)); // iphone->phone
+          }
         }
-        if (/\bphone\b/.test(L) || /iphone/.test(L)) {
+        if (
+          /\bphone\b/.test(normalizedLabel) ||
+          /iphone/.test(normalizedLabel)
+        ) {
           syns.add("phone");
           syns.add("smartphone");
           syns.add("mobile");
@@ -289,9 +299,9 @@
           syns.add("cell phone");
           syns.add("apple phone");
         }
-        L.split(/[\/\+]/).forEach((p) => {
-          const t = p.trim();
-          if (t && t !== L) syns.add(t);
+        normalizedLabel.split(/[\/\+]/).forEach((part) => {
+          const trimmed = part.trim();
+          if (trimmed && trimmed !== normalizedLabel) syns.add(trimmed);
         });
         return Array.from(syns);
       }
@@ -304,18 +314,22 @@
           const id = normalize(label).replace(/\s+/g, "_") || `topic_${idx}`;
           const words = tokenize(label);
           const keywordSet = new Set();
-          for (const w of words) variants(w).forEach((v) => keywordSet.add(v));
+          for (const word of words) {
+            variants(word).forEach((variant) => keywordSet.add(variant));
+          }
           const providedSyns =
             synonyms[label] || synonyms[id] || synonyms[words[0]] || [];
-          for (const s of providedSyns)
-            tokenize(s).forEach((w) =>
-              variants(w).forEach((v) => keywordSet.add(v))
+          for (const synonym of providedSyns) {
+            tokenize(synonym).forEach((word) =>
+              variants(word).forEach((variant) => keywordSet.add(variant))
             );
+          }
           const derived = deriveSynonymsFromLabel(label);
-          for (const s of derived)
-            tokenize(s).forEach((w) =>
-              variants(w).forEach((v) => keywordSet.add(v))
+          for (const synonym of derived) {
+            tokenize(synonym).forEach((word) =>
+              variants(word).forEach((variant) => keywordSet.add(variant))
             );
+          }
           const phrases = [
             label.toLowerCase(),
             ...(extraPhrases[label] || extraPhrases[id] || []),
@@ -333,26 +347,34 @@
 
       function scoreTopic(text, tokens, topic) {
         const textNorm = normalize(text);
-        for (const n of topic.negatives || [])
-          if (textNorm.includes(n)) return 0;
+        for (const negative of topic.negatives || []) {
+          if (textNorm.includes(negative)) return 0;
+        }
         let score = 0;
-        for (const p of topic.phrases || [])
-          if (p && textNorm.includes(p)) score += 3;
+        for (const phrase of topic.phrases || []) {
+          if (phrase && textNorm.includes(phrase)) score += 3;
+        }
         const tokenSet = new Set(tokens);
-        for (const kw of topic.keywords || [])
-          if (tokenSet.has(kw)) score += 1.5;
-        for (const t of tokens) {
-          for (const kw of topic.keywords || []) {
-            const d = levenshtein(t, kw);
-            if ((kw.length <= 4 && d === 1) || (kw.length > 4 && d <= 2))
+        for (const keyword of topic.keywords || []) {
+          if (tokenSet.has(keyword)) score += 1.5;
+        }
+        for (const token of tokens) {
+          for (const keyword of topic.keywords || []) {
+            const d = levenshtein(token, keyword);
+            if (
+              (keyword.length <= 4 && d === 1) ||
+              (keyword.length > 4 && d <= 2)
+            ) {
               score += 0.5;
+            }
             const minCore = 5;
             if (
-              t.length >= minCore &&
-              kw.length >= minCore &&
-              (t.includes(kw) || kw.includes(t))
-            )
+              token.length >= minCore &&
+              keyword.length >= minCore &&
+              (token.includes(keyword) || keyword.includes(token))
+            ) {
               score += 1.0;
+            }
           }
         }
         return score;
@@ -367,12 +389,14 @@
             label: topic.label,
             score: scoreTopic(text, tokens, topic),
           }))
-          .filter((t) => t.score >= minScore)
-          .sort((a, b) => b.score - a.score)
+          .filter((topicScore) => topicScore.score >= minScore)
+          .sort((topicA, topicB) => topicB.score - topicA.score)
           .slice(0, topK);
         if (scored.length > 0) {
           const max = scored[0].score || 1;
-          for (const s of scored) s.confidence = +(s.score / max).toFixed(2);
+          for (const scoredItem of scored) {
+            scoredItem.confidence = +(scoredItem.score / max).toFixed(2);
+          }
         }
         return scored;
       }
@@ -404,9 +428,9 @@
         }
         // Clean & dedupe: remove very short generic words
         const cleaned = Array.from(topics)
-          .map((t) => t.trim())
-          .filter((t) => t && t.length >= 2)
-          .filter((t) => !/^learn more$/i.test(t));
+          .map((topic) => topic.trim())
+          .filter((topic) => topic && topic.length >= 2)
+          .filter((topic) => !/^learn more$/i.test(topic));
         return cleaned;
       }
 
@@ -427,11 +451,13 @@
 
       function renderChips(list) {
         topicsChips.innerHTML = "";
-        list.forEach((t) => {
-          const chip = document.createElement("div");
-          chip.className = "chip topic-badge";
-          chip.textContent = t;
-          topicsChips.appendChild(chip);
+        list.forEach((topic) => {
+          {
+            const chip = document.createElement("div");
+            chip.className = "chip topic-badge";
+            chip.textContent = topic;
+            topicsChips.appendChild(chip);
+          }
         });
         topicsMeta.textContent = list.length
           ? `${list.length} topics loaded`
@@ -444,24 +470,26 @@
           resultsList.innerHTML = '<li class="collection-item">No matches</li>';
           return;
         }
-        for (const r of items) {
-          const li = document.createElement("li");
-          li.className = "collection-item";
-          li.innerHTML = `<span class="title"><strong>${
-            r.label
-          }</strong></span><br/><span class="dim small">score: ${r.score.toFixed(
-            2
-          )} · confidence: ${r.confidence}</span>`;
-          resultsList.appendChild(li);
+        for (const result of items) {
+          {
+            const li = document.createElement("li");
+            li.className = "collection-item";
+            li.innerHTML = `<span class="title"><strong>${
+              result.label
+            }</strong></span><br/><span class="dim small">score: ${result.score.toFixed(
+              2
+            )} · confidence: ${result.confidence}</span>`;
+            resultsList.appendChild(li);
+          }
         }
       }
 
       btnFetch.addEventListener("click", async () => {
         fetchStatus.textContent = "Fetching…";
         try {
-          const resp = await fetch("/data.json", { mode: "cors" });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const data = await resp.json();
+          const response = await fetch("/data.json", { mode: "cors" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
           topicStrings = extractAppleTopics(data);
           renderChips(topicStrings);
           // Build model with a few helpful synonyms for common Apple terms
